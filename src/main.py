@@ -4,11 +4,19 @@ MicroPython implementation
 """
 
 import time
+import uio
+import sys
 import machine
 from machine import Pin, I2C, UART, TouchPad, ADC
 import neopixel
 import json
-from config import *
+from config import (PINS, NUM_LEDS, UART_ID, UART_BAUDRATE,
+                    DISPLAY_BRIGHTNESS_MIN, DISPLAY_BRIGHTNESS_MAX,
+                    LIGHT_SENSOR_MIN, LIGHT_SENSOR_MAX,
+                    MENU_TIMEOUT, MENU_ITEMS,
+                    SUNRISE_DURATION, SNOOZE_DURATION, ALARM_MAX_DURATION,
+                    DFPLAYER_VOLUME_MAX, SOUND_TYPES, SOUND_PROFILES,
+                    TOUCH_THRESHOLD_MIN, TOUCH_THRESHOLD_MAX)
 
 # Import hardware drivers (to be created separately)
 # These will need to be uploaded alongside main.py
@@ -50,7 +58,14 @@ class AlarmClock:
         
         # Sunrise variables
         self.sunrise_stage = 0  # 0-255 for gradual brightening
-        
+
+        # Edit mode state (for setting alarm/clock time via encoder)
+        self.edit_mode = None   # None | 'alrm_h' | 'alrm_m' | 'cloc_h' | 'cloc_m'
+        self.edit_hour = 0
+        self.edit_minute = 0
+        self._blink_state = True
+        self._blink_time = time.ticks_ms()
+
         # Load settings from NVS
         self.load_settings()
         
@@ -156,11 +171,13 @@ class AlarmClock:
         """Process rotary encoder input"""
         rotation = self.encoder.get_rotation()
         clicked = self.encoder.get_click()
-        
+
         if rotation != 0:
             self.last_menu_time = time.ticks_ms()
-            
-            if self.in_menu:
+
+            if self.edit_mode is not None:
+                self._handle_edit_rotation(rotation)
+            elif self.in_menu:
                 # Navigate menu
                 self.menu_pos = (self.menu_pos + rotation) % (self.menu_max + 1)
                 if self.menu_pos < 0:
@@ -169,16 +186,22 @@ class AlarmClock:
                 # Enter menu on rotation
                 self.in_menu = True
                 self.menu_pos = 1  # Start at ALRM menu
-        
+
         if clicked:
             self.last_menu_time = time.ticks_ms()
-            self.handle_menu_action()
+            if self.edit_mode is not None:
+                self._handle_edit_click()
+            else:
+                self.handle_menu_action()
     
     def handle_menu_action(self):
         """Handle encoder button click based on current menu position"""
         if self.menu_pos == 1:  # ALRM - Set alarm time
-            print("Enter alarm setting mode")
-            # TODO: Implement alarm time setting logic
+            self.edit_hour = self.alarm_hour
+            self.edit_minute = self.alarm_minute
+            self.edit_mode = 'alrm_h'
+            self._blink_state = True
+            self._blink_time = time.ticks_ms()
         elif self.menu_pos == 2:  # ON-F - Toggle alarm
             self.alarm_enabled = not self.alarm_enabled
             self.save_settings()
@@ -188,25 +211,67 @@ class AlarmClock:
             self.save_settings()
             print(f"Sound type: {SOUND_TYPES[self.sound_type]}")
         elif self.menu_pos == 4:  # CLOC - Set current time
-            print("Enter time setting mode")
-            # TODO: Implement time setting logic
+            dt = self.rtc.get_time()
+            self.edit_hour = dt[4]
+            self.edit_minute = dt[5]
+            self.edit_mode = 'cloc_h'
+            self._blink_state = True
+            self._blink_time = time.ticks_ms()
     
     def check_menu_timeout(self):
         """Return to clock display after timeout"""
-        if self.in_menu:
+        if self.in_menu or self.edit_mode is not None:
             if time.ticks_diff(time.ticks_ms(), self.last_menu_time) > MENU_TIMEOUT:
                 self.in_menu = False
+                self.edit_mode = None
                 self.menu_pos = 0
+
+    def _handle_edit_rotation(self, rotation):
+        """Adjust the value currently being edited"""
+        if self.edit_mode in ('alrm_h', 'cloc_h'):
+            self.edit_hour = (self.edit_hour + rotation) % 24
+        else:
+            self.edit_minute = (self.edit_minute + rotation) % 60
+        # Reset blink so user immediately sees the updated value
+        self._blink_state = True
+        self._blink_time = time.ticks_ms()
+
+    def _handle_edit_click(self):
+        """Advance to next edit field, or commit and save when done"""
+        if self.edit_mode == 'alrm_h':
+            self.edit_mode = 'alrm_m'
+        elif self.edit_mode == 'alrm_m':
+            self.alarm_hour = self.edit_hour
+            self.alarm_minute = self.edit_minute
+            self.save_settings()
+            print(f"Alarm set to {self.alarm_hour:02d}:{self.alarm_minute:02d}")
+            self.edit_mode = None
+            self.in_menu = False
+        elif self.edit_mode == 'cloc_h':
+            self.edit_mode = 'cloc_m'
+        elif self.edit_mode == 'cloc_m':
+            dt = self.rtc.get_time()
+            self.rtc.set_time(dt[0], dt[1], dt[2], dt[3],
+                              self.edit_hour, self.edit_minute, 0)
+            print(f"Clock set to {self.edit_hour:02d}:{self.edit_minute:02d}")
+            self.edit_mode = None
+            self.in_menu = False
     
     def handle_touch(self):
         """Process touch sensor input"""
-        touch_snooze_value = self.touch_snooze.read()
-        touch_stop_value = self.touch_stop.read()
-        
+        try:
+            touch_snooze_value = self.touch_snooze.read()
+        except ValueError:
+            touch_snooze_value = 0
+        try:
+            touch_stop_value = self.touch_stop.read()
+        except ValueError:
+            touch_stop_value = 0
+
         if TOUCH_THRESHOLD_MIN < touch_snooze_value < TOUCH_THRESHOLD_MAX:
             if self.alarm_active:
                 self.snooze_alarm()
-        
+
         if TOUCH_THRESHOLD_MIN < touch_stop_value < TOUCH_THRESHOLD_MAX:
             if self.alarm_active:
                 self.stop_alarm()
@@ -230,14 +295,19 @@ class AlarmClock:
     
     def start_alarm(self):
         """Start the alarm sequence"""
-        print("ALARM! Starting sunrise sequence...")
+        print("ALARM! Starting alarm sequence...")
         self.alarm_active = True
         self.alarm_start_time = time.time()
         self.sunrise_stage = 0
-        
-        # Start sound at minimum volume
+
+        # Load per-track profile
+        profile = SOUND_PROFILES.get(self.sound_type, SOUND_PROFILES[1])
+        self._vol_start = profile['vol_start']
+        self._ramp_dur = profile['ramp_dur']
+
+        # Start sound at the profile's starting volume
+        self.dfplayer.volume(self._vol_start)
         self.dfplayer.play(self.sound_type)
-        self.dfplayer.volume(DFPLAYER_VOLUME_MIN)
     
     def update_alarm(self):
         """Update alarm state during sunrise sequence"""
@@ -246,14 +316,13 @@ class AlarmClock:
         
         elapsed = time.time() - self.alarm_start_time
         
-        # Calculate progress (0.0 to 1.0)
-        progress = min(elapsed / SUNRISE_DURATION, 1.0)
-        
-        # Update LED sunrise
-        self.update_sunrise_leds(progress)
-        
-        # Update sound volume
-        volume = int(progress * DFPLAYER_VOLUME_MAX)
+        # LED sunrise always uses the full SUNRISE_DURATION for visual effect
+        led_progress = min(elapsed / SUNRISE_DURATION, 1.0)
+        self.update_sunrise_leds(led_progress)
+
+        # Volume ramp uses per-track ramp_dur and vol_start
+        ramp_progress = min(elapsed / self._ramp_dur, 1.0)
+        volume = int(self._vol_start + ramp_progress * (DFPLAYER_VOLUME_MAX - self._vol_start))
         self.dfplayer.volume(volume)
         
         # Check if alarm has been running too long
@@ -309,12 +378,40 @@ class AlarmClock:
     
     def update_display(self):
         """Update the display based on current mode"""
-        if self.in_menu:
+        if self.edit_mode is not None:
+            self._update_edit_display()
+        elif self.in_menu:
             # Show menu item
             self.display.show(MENU_ITEMS[self.menu_pos])
         else:
             # Show current time
             self.display.show_time(self.current_hour, self.current_minute)
+
+    def _update_edit_display(self):
+        """Show blinking hour or minute field while editing"""
+        if time.ticks_diff(time.ticks_ms(), self._blink_time) > 500:
+            self._blink_state = not self._blink_state
+            self._blink_time = time.ticks_ms()
+
+        h = self.edit_hour
+        m = self.edit_minute
+        seg = bytearray(4)
+
+        if self.edit_mode in ('alrm_h', 'cloc_h'):
+            # Hours blink, minutes steady
+            seg[0] = self.display.encode_digit(h // 10) if self._blink_state else 0x00
+            seg[1] = self.display.encode_digit(h % 10) if self._blink_state else 0x00
+            seg[2] = self.display.encode_digit(m // 10)
+            seg[3] = self.display.encode_digit(m % 10)
+        else:
+            # Hours steady, minutes blink
+            seg[0] = self.display.encode_digit(h // 10)
+            seg[1] = self.display.encode_digit(h % 10)
+            seg[2] = self.display.encode_digit(m // 10) if self._blink_state else 0x00
+            seg[3] = self.display.encode_digit(m % 10) if self._blink_state else 0x00
+
+        seg[1] |= 0x80  # always show colon
+        self.display.write(seg)
     
     def run(self):
         """Main loop"""
@@ -352,10 +449,30 @@ class AlarmClock:
                 self.clear_leds()
                 break
             except Exception as e:
-                print(f"Error in main loop: {e}")
+                buf = uio.StringIO()
+                sys.print_exception(e, buf)
+                msg = buf.getvalue()
+                print("Error in main loop:", msg)
+                try:
+                    with open('error.log', 'a') as f:
+                        f.write("loop {} {}\n".format(time.time(), msg))
+                except:
+                    pass
                 time.sleep(1)
 
 # Main entry point
-if __name__ == "__main__":
+try:
     alarm_clock = AlarmClock()
     alarm_clock.run()
+except Exception as e:
+    buf = uio.StringIO()
+    sys.print_exception(e, buf)
+    msg = buf.getvalue()
+    print("FATAL:", msg)
+    try:
+        with open('error.log', 'a') as f:
+            f.write("boot {} {}\n".format(time.time(), msg))
+    except:
+        pass
+    time.sleep(5)
+    machine.reset()

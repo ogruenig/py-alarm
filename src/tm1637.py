@@ -13,7 +13,6 @@ class TM1637:
     def __init__(self, clk, dio, brightness=7):
         self.clk = clk
         self.dio = dio
-        self.brightness = brightness
         self._bright = brightness
         
         self.clk.init(Pin.OUT, value=0)

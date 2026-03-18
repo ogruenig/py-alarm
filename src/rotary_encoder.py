@@ -29,9 +29,9 @@ class RotaryEncoder:
         
         if clk_state != self.last_clk_state:
             if self.dt.value() != clk_state:
-                rotation_detected = 1  # Clockwise
-            else:
                 rotation_detected = -1  # Counter-clockwise
+            else:
+                rotation_detected = 1  # Clockwise
         
         self.last_clk_state = clk_state
         return rotation_detected

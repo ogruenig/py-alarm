@@ -27,7 +27,7 @@ PINS = {
     
     # Touch Sensors
     'TOUCH_SNOOZE': 4,   # T0 - GPIO4
-    'TOUCH_STOP': 0,     # T1 - GPIO0
+    'TOUCH_STOP': 33,    # T8 - GPIO33 (GPIO0 avoided: it's the ESP32 boot pin)
     
     # Light Sensor (analog)
     'LIGHT_SENSOR': 36,
@@ -39,10 +39,10 @@ UART_ID = 1
 UART_BAUDRATE = 9600
 
 # Display Settings
-DISPLAY_BRIGHTNESS_MIN = 10
-DISPLAY_BRIGHTNESS_MAX = 80
-LIGHT_SENSOR_MIN = 50
-LIGHT_SENSOR_MAX = 3000
+DISPLAY_BRIGHTNESS_MIN = 10   # -> TM1637 level 1 (very dim)
+DISPLAY_BRIGHTNESS_MAX = 70   # -> TM1637 level 7 (fully bright)
+LIGHT_SENSOR_MIN = 280        # at or below this -> minimum brightness
+LIGHT_SENSOR_MAX = 771        # at or above this -> maximum brightness
 
 # Menu Settings
 MENU_TIMEOUT = 5000  # milliseconds to return to clock display
@@ -60,17 +60,27 @@ SNOOZE_DURATION = 300   # 5 minutes in seconds
 ALARM_MAX_DURATION = 1800  # 30 minutes max alarm duration
 
 # Sound Settings
-DFPLAYER_VOLUME_MIN = 0
-DFPLAYER_VOLUME_MAX = 30
+# Global max volume (0-30). Tune this to match your speaker/room.
+DFPLAYER_VOLUME_MAX = 25
+
 SOUND_TYPES = {
-    1: "Birds",    # MP3 file 1
-    2: "Ring",     # MP3 file 2
-    3: "Beep",     # MP3 file 3
+    1: "BIRD",   # Track 1 - Birds twittering (default sunrise alarm)
+    2: "SIRN",   # Track 2 - Siren / alarm
+    3: "COCK",   # Track 3 - Cock crow
+}
+
+# Per-track sound profiles
+# vol_start : initial volume when alarm fires (0-30)
+# ramp_dur  : seconds to ramp from vol_start to DFPLAYER_VOLUME_MAX
+SOUND_PROFILES = {
+    1: {'vol_start':  0, 'ramp_dur': 600},  # Birds: gentle 10-min ramp from silence
+    2: {'vol_start': 15, 'ramp_dur':  60},  # Siren: loud within 1 min
+    3: {'vol_start': 15, 'ramp_dur':  60},  # Cock crow: loud within 1 min
 }
 
 # Touch Sensor Thresholds
-TOUCH_THRESHOLD_MIN = 5
-TOUCH_THRESHOLD_MAX = 20
+TOUCH_THRESHOLD_MIN = 20
+TOUCH_THRESHOLD_MAX = 150
 
 # Storage Keys
 STORAGE_NAMESPACE = "ogalarm"
