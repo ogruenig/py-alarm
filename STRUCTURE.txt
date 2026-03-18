@@ -1,0 +1,45 @@
+ESP32 Alarm Clock - Directory Structure
+========================================
+
+py-alarm/
+├── README.md                   Main documentation
+├── INSTALLATION.md             Setup and installation guide
+├── PROJECT_SUMMARY.md          Implementation details
+├── QUICK_REFERENCE.txt         Quick reference card
+├── CHANGELOG.md                Version history
+├── LICENSE                     MIT License
+├── .gitignore                  Git ignore rules
+├── requirements.txt            Python dependencies info
+├── STRUCTURE.txt               This file
+│
+├── src/                        Core application files
+│   ├── main.py                 Main program (upload to ESP32)
+│   ├── config.py               Configuration & pin assignments
+│   ├── tm1637.py               TM1637 display driver
+│   ├── ds3231.py               DS3231 RTC driver
+│   ├── dfplayer.py             DFPlayer Mini MP3 driver
+│   └── rotary_encoder.py       Rotary encoder handler
+│
+├── tests/                      Hardware test scripts
+│   ├── test_display.py         Test TM1637 display
+│   ├── test_rtc.py             Test RTC timekeeping
+│   ├── test_touch.py           Test touch sensors
+│   ├── test_encoder.py         Test rotary encoder
+│   └── test_leds.py            Test WS2812B LEDs
+│
+└── docs/                       Additional documentation
+    └── SYSTEM_ARCHITECTURE.md  System design & diagrams
+
+Files to Upload to ESP32:
+==========================
+Upload all files from src/ and optionally tests/ to your ESP32.
+
+Minimum required for operation:
+- src/config.py
+- src/tm1637.py
+- src/ds3231.py
+- src/dfplayer.py
+- src/rotary_encoder.py
+- src/main.py
+
+Total Size: ~28 KB (fits easily on ESP32)

@@ -1,0 +1,16 @@
+# MicroPython Requirements
+# All dependencies are built-in to MicroPython for ESP32
+
+# Required MicroPython version: 1.20 or higher
+# Target hardware: ESP32 (tested on ESP32 D1 Mini)
+
+# Built-in modules used:
+# - machine (Pin, I2C, UART, TouchPad, ADC)
+# - neopixel (WS2812B LED control)
+# - time
+# - json
+
+# For development/flashing (install on host computer):
+# esptool
+# adafruit-ampy
+# OR use Thonny IDE
