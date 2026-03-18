@@ -5,12 +5,14 @@ A feature-rich alarm clock using ESP32 D1 Mini with sunrise simulation and MP3 p
 ## Features
 
 - ✅ **Sunrise Alarm**: 10-minute gradual LED brightening with color transition (red → orange → yellow → white)
-- ✅ **Sound Options**: Multiple alarm sounds (birds, ringing, etc.) with gradual volume increase
-- ✅ **User-Friendly Menu**: Navigate with rotary encoder
-- ✅ **Snooze Function**: Touch sensor for 5-minute snooze
-- ✅ **Auto-Brightness**: Display brightness adjusts based on ambient light
-- ✅ **Persistent Settings**: Alarm settings saved to flash memory
-- ✅ **RTC Timekeeping**: Accurate DS3231 real-time clock
+- ✅ **6 Sound Options**: Birds, siren, cockerel, bell, bird 2, pop — with 5-second preview and gradual volume increase
+- ✅ **User-Friendly Menu**: Navigate and configure everything on-device with rotary encoder
+- ✅ **Snooze Function**: Touch sensor pauses alarm, resumes from where it left off
+- ✅ **Night Light**: Touch snooze in the dark for 30 s of full-white LEDs, then a 10 s fade
+- ✅ **Auto-Brightness**: Display brightness adjusts to ambient light via EMA-smoothed sensor
+- ✅ **Persistent Settings**: Alarm time, on/off, sound choice, and LED toggle saved to flash
+- ✅ **RTC Timekeeping**: Accurate DS3231 real-time clock (I2C-resilient, reads once per minute)
+- ✅ **Sunrise LED Toggle**: Enable or disable the LED sunrise effect independently of the alarm sound
 
 ## Hardware Components
 
@@ -22,8 +24,9 @@ A feature-rich alarm clock using ESP32 D1 Mini with sunrise simulation and MP3 p
 | MP3 Player | DFPlayer Mini | TX: 17, RX: 16 |
 | LED Strip | WS2812B (5 LEDs) | DATA: 27 |
 | Input | KY-040 Rotary Encoder | CLK: 32, DT: 25, SW: 15 |
-| Touch Sensors | ESP32 Touch | Snooze: GPIO4 (T0), Stop: GPIO0 (T1) |
-| Light Sensor | Analog | GPIO36 |
+| Touch Snooze | ESP32 Touch | GPIO4 (T0) |
+| Touch Stop | ESP32 Touch | GPIO0 (T1) |
+| Light Sensor | Analog | GPIO36 (ATTN_0DB) |
 
 ## Installation
 
@@ -39,7 +42,7 @@ esptool.py --chip esp32 --port /dev/ttyUSB0 write_flash -z 0x1000 esp32-*.bin
 
 ### 2. Upload Files to ESP32
 
-Use `ampy`, `rshell`, or Thonny IDE to upload the following files:
+Use `mpremote` (recommended) or `ampy`/`rshell`:
 
 **Required files:**
 - `main.py` - Main program
@@ -49,28 +52,32 @@ Use `ampy`, `rshell`, or Thonny IDE to upload the following files:
 - `dfplayer.py` - MP3 player driver
 - `rotary_encoder.py` - Rotary encoder driver
 
-**Example using ampy:**
+**Example using mpremote:**
 ```bash
-ampy --port /dev/ttyUSB0 put config.py
-ampy --port /dev/ttyUSB0 put tm1637.py
-ampy --port /dev/ttyUSB0 put ds3231.py
-ampy --port /dev/ttyUSB0 put dfplayer.py
-ampy --port /dev/ttyUSB0 put rotary_encoder.py
-ampy --port /dev/ttyUSB0 put main.py
+cd src/
+mpremote connect /dev/ttyUSB0 cp config.py :config.py
+mpremote connect /dev/ttyUSB0 cp tm1637.py :tm1637.py
+mpremote connect /dev/ttyUSB0 cp ds3231.py :ds3231.py
+mpremote connect /dev/ttyUSB0 cp dfplayer.py :dfplayer.py
+mpremote connect /dev/ttyUSB0 cp rotary_encoder.py :rotary_encoder.py
+mpremote connect /dev/ttyUSB0 cp main.py :main.py
 ```
 
 ### 3. Prepare SD Card for DFPlayer
 
-Create folders on the SD card:
+Format as FAT32 and place MP3 files directly in the root or `/mp3/` folder:
 ```
 SD Card/
 └── mp3/
-    ├── 0001.mp3  (Birds singing)
-    ├── 0002.mp3  (Ringing alarm)
-    └── 0003.mp3  (Beeping sound)
+    ├── 0001.mp3  (Birds)
+    ├── 0002.mp3  (Siren)
+    ├── 0003.mp3  (Cockerel)
+    ├── 0004.mp3  (Bell)
+    ├── 0005.mp3  (Bird 2)
+    └── 0006.mp3  (Pop)
 ```
 
-⚠️ **Important**: 
+⚠️ **Important**:
 - Files must be named `0001.mp3`, `0002.mp3`, etc.
 - Use FAT32 format for SD card
 - MP3 files should be 8-48kHz, mono or stereo
@@ -81,18 +88,18 @@ SD Card/
 
 The alarm clock has 5 menu items, navigated with the rotary encoder:
 
-| Menu | Display | Function | Action |
-|------|---------|----------|--------|
-| 0 | `TIME` | Show current time | Default view |
-| 1 | `ALRM` | Set alarm time | Click to enter (not yet implemented) |
-| 2 | `ON-F` | Toggle alarm on/off | Click to toggle |
-| 3 | `SOND` | Change sound type | Click to cycle sounds |
-| 4 | `CLOC` | Set current time | Click to enter (not yet implemented) |
+| Position | Display | Function | Action |
+|----------|---------|----------|--------|
+| 0 | `ALRM` | Set alarm time | Click → rotate hours → click → rotate minutes → click to save |
+| 1 | `ON-F` | Toggle alarm on/off | Click to toggle; display shows ` ON ` or `OFF `, LEDs flash green/red |
+| 2 | `SOND` | Change sound type | Click to cycle: BIRD → SIRN → COCK → BELL → BRD2 → POP; plays 5 s preview |
+| 3 | `CLOC` | Set current time | Click → rotate hours → click → rotate minutes → click to save to RTC |
+| 4 | `LED ` | Toggle sunrise LEDs | Click to enable/disable LED sunrise effect independently of sound |
 
 **Controls:**
-- **Rotate encoder**: Navigate menu items
-- **Click encoder**: Select/confirm menu item
-- **Touch Snooze** (GPIO4): Snooze alarm for 5 minutes
+- **Rotate encoder**: Navigate menu / adjust value when editing
+- **Click encoder**: Enter menu / confirm / advance to next field
+- **Touch Snooze** (GPIO4): Snooze alarm for 5 min; or trigger night light when alarm is off and it's dark
 - **Touch Stop** (GPIO0): Stop alarm completely
 - **Menu timeout**: Returns to time display after 5 seconds of inactivity
 
@@ -100,8 +107,12 @@ The alarm clock has 5 menu items, navigated with the rotary encoder:
 
 In this version, you need to edit the alarm time in code or via the REPL:
 
+### Setting the Alarm
+
+Use the `ALRM` menu item with the rotary encoder — no REPL needed.
+
+If you need to set it via REPL:
 ```python
-# Connect via serial terminal
 >>> from main import alarm_clock
 >>> alarm_clock.alarm_hour = 7
 >>> alarm_clock.alarm_minute = 30
@@ -109,12 +120,11 @@ In this version, you need to edit the alarm time in code or via the REPL:
 >>> alarm_clock.save_settings()
 ```
 
-📝 **Note**: Interactive alarm setting via rotary encoder is planned for future implementation.
-
 ### Setting Current Time
 
-Set the RTC time via REPL:
+Use the `CLOC` menu item with the rotary encoder — no REPL needed.
 
+First-time setup via REPL (if RTC has never been set):
 ```python
 >>> from machine import I2C, Pin
 >>> from ds3231 import DS3231
@@ -127,44 +137,51 @@ Set the RTC time via REPL:
 
 When the alarm triggers:
 
-1. **Start** (00:00): LEDs begin at dark red, sound starts at minimum volume
-2. **Progress** (00:00-10:00): 
-   - LEDs gradually brighten: red → orange → yellow → white
-   - Sound volume gradually increases from 0 to 30
-3. **Peak** (10:00+): Full brightness and volume maintained
-4. **Max duration**: Alarm auto-stops after 30 minutes if not manually stopped
+1. **Start** (00:00): LEDs begin at dark red, sound starts at low volume (configurable per track)
+2. **Progress** (00:00-10:00):
+   - LEDs gradually brighten: red → orange → yellow → white (if LED sunrise enabled)
+   - Sound volume gradually increases up to `DFPLAYER_VOLUME_MAX`
+3. **Peak** (10:00+): Full brightness and volume maintained; sound loops automatically
+4. **Snooze**: Pauses sound and LEDs; resumes from the same point in the sunrise after 5 min
+5. **Max duration**: Alarm auto-stops after 30 minutes if not manually stopped
+
+## Night Light
+
+Touch the **snooze pad (GPIO4)** when the alarm is not active and the room is dark:
+- LEDs light up full white for 30 seconds
+- Then fade out over 10 seconds
+- Only activates below the configured light threshold (default EMA < 80)
 
 ## Troubleshooting
 
-### Display not working
-- Check I2C connections (CLK=18, DIO=19)
-- Verify 3.3V power supply
-- Test with: `test_display.py`
+### Display shows INIT and hangs
+- The RTC I2C bus may be stuck — **unplug and replug USB** for a full power cycle
+
+### Display shows 00:00 after boot
+- RTC not found or time not yet set — use `CLOC` menu to set the time
 
 ### RTC not keeping time
-- Check I2C address (should be 0x68)
-- Verify battery is installed on DS3231
-- Set time manually via REPL
+- Check I2C connections (SDA=21, SCL=22)
+- Verify coin cell battery is installed in DS3231 module
 
 ### DFPlayer not playing
-- Check UART connections (TX→RX, RX→TX)
+- Check UART connections (TX→RX, RX→TX cross-wired)
 - Verify SD card is FAT32 formatted
-- Ensure MP3 files are correctly named (0001.mp3, etc.)
-- Check speaker/audio output
+- Ensure MP3 files are named `0001.mp3` through `0006.mp3`
 
 ### Touch sensors not responding
-- Touch thresholds may need adjustment in `config.py`
-- Test touch values with: `test_touch.py`
+- Touch thresholds are in `config.py` (`TOUCH_THRESHOLD_MIN/MAX`)
+- Test touch values with `tests/test_touch.py`
+
+### Night light not triggering
+- Room may be too bright — cover the light sensor or adjust `NIGHT_LIGHT_THRESHOLD` in `config.py`
 
 ### LEDs not lighting
 - Verify WS2812B data pin (GPIO27)
-- Check 5V power supply (WS2812B requires 5V)
-- Ensure proper ground connection
+- Check 5V power supply (WS2812B requires 5V, not 3.3V)
 
 ## Future Enhancements
 
-- [ ] Interactive alarm time setting via rotary encoder
-- [ ] Interactive clock time setting
 - [ ] Multiple alarm slots
 - [ ] Weekday-specific alarms
 - [ ] WiFi/NTP time synchronization

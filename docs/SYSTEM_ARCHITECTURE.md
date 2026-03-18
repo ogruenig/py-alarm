@@ -148,35 +148,49 @@ Time        Progress    Color Calculation           RGB Output
                            │
                            ▼
               ┌────────────────────────┐
-         ┌───>│  menu_pos = 0          │<────┐
-         │    │  Display: TIME         │     │
-         │    │  Show HH:MM            │     │
-         │    └────────┬───────────────┘     │
-         │             │                     │
-         │       Rotate Encoder              │
-         │             │                     │
-         │             ▼                     │
-         │    ┌────────────────┐        Timeout
-         │    │  in_menu=True  │        5 sec
-         │    │  menu_pos++    │            │
-         │    └────────┬───────┘            │
-         │             │                     │
-         │             ▼                     │
-         │    ┌────────────────────┐        │
-         │    │  menu_pos = 1      │        │
-         │    │  Display: ALRM     │────────┘
-         │    │  (Set alarm time)  │
-         │    └────────┬───────────┘
-         │             │ Click
-         │             ▼
-         │    [ Enter alarm setting ]
-         │    [ Not yet implemented ]
-         │             │
-         └─────────────┴─> Continue rotating...
-                           menu_pos = 2 (ON-F)
-                           menu_pos = 3 (SOND)
-                           menu_pos = 4 (CLOC)
-                           Wraps to 0
+              │  Display current time  │<────┐
+              │  (alarm inactive)      │     │
+              │                        │     │
+              └────────┬───────────────┘     │
+                       │                     │
+                Rotate Encoder              Timeout
+                       │                  5 seconds
+                       ▼                     │
+              ┌────────────────────┐         │
+              │  in_menu = True    │         │
+              │  menu_pos = 0      │         │
+              │  Display: ALRM     │─────────┘
+              │  (Set alarm time)  │
+              └────────┬───────────┘
+                       │ Click
+                       ▼
+              ┌────────────────┐
+              │ edit_mode→alrm_h│
+              │ Rotate to set   │
+              └────────┬────────┘
+                       │ Click
+                       ▼
+              ┌────────────────┐
+              │ edit_mode→alrm_m│
+              └────────┬────────┘
+                       │ Click → Save
+                       │
+              ┌────────┴──────────────────────────┐
+              │ Rotate again to menu_pos = 1      │
+              │ Display: ON-F (toggle alarm)      │
+              │ Round-robin through:              │
+              │   0 = ALRM (set time)             │
+              │   1 = ON-F  (enable/disable)      │
+              │   2 = SOND  (sound choice)        │
+              │   3 = CLOC  (set clock)           │
+              │   4 = LED   (sunrise toggle)      │
+              │ Wraps back to 0                   │
+              └─────────────────────────────────┘
+
+While Alarm Active:
+  - Encoder rotation:  Ignored
+  - Encoder click:     Stop alarm immediately
+  - Touch snooze:      Snooze 5 min (resume from same point)
 ```
 
 ## Storage Architecture
@@ -191,7 +205,8 @@ Time        Progress    Color Calculation           RGB Output
 │  │    "alarm_hour": 7,           │ │
 │  │    "alarm_minute": 30,        │ │
 │  │    "alarm_enabled": true,     │ │
-│  │    "sound_type": 1            │ │
+│  │    "sound_type": 0,           │ │
+│  │    "led_enabled": true        │ │
 │  │  }                            │ │
 │  └───────────────────────────────┘ │
 │                                     │
@@ -218,7 +233,7 @@ Time        Progress    Color Calculation           RGB Output
 class AlarmClock:
     # Hardware objects
     - display: TM1637
-    - rtc: DS3231
+    - rtc: DS3231 (or None if unavailable)
     - dfplayer: DFPlayer
     - leds: NeoPixel
     - encoder: RotaryEncoder
@@ -226,27 +241,49 @@ class AlarmClock:
     - touch_stop: TouchPad
     - light_sensor: ADC
     
-    # State variables
-    - menu_pos: int
-    - in_menu: bool
+    # Time state
     - current_hour/minute/second: int
-    - alarm_hour/minute: int
-    - alarm_enabled/active: bool
-    - sound_type: int
-    - sunrise_stage: int
+    - _last_rtc_sync: ticks_ms (RTC read once per minute)
     
-    # Methods
+    # Alarm state
+    - alarm_hour/minute: int
+    - alarm_enabled: bool
+    - alarm_active: bool
+    - alarm_start_time: time.time()
+    - snooze_until: time.time()
+    - sound_type: int (0-5, index into SOUND_TYPES)
+    - led_enabled: bool (LED sunrise on/off toggle)
+    - _alarm_elapsed: seconds (for snooze resume)
+    - _vol_start, _ramp_dur: per-track settings
+    
+    # Menu state
+    - menu_pos: int (0-4)
+    - in_menu: bool
+    - edit_mode: str | None ('alrm_h', 'alrm_m', 'cloc_h', 'cloc_m')
+    - edit_hour/minute: int
+    - last_menu_time: ticks_ms
+    
+    # Feedback & effects
+    - _feedback_until: ticks_ms (message display timeout)
+    - _feedback_msg: str
+    - _preview_until: ticks_ms (SOND preview timeout)
+    - _night_light_start: time.time() (0 = inactive)
+    - _light_ema: float (exponential moving average of sensor)
+    
+    # Methods (key ones)
     + init_hardware()
     + load_settings() / save_settings()
-    + update_time()
-    + handle_encoder()
-    + handle_touch()
+    + update_time()  # RTC read once per minute
+    + handle_encoder()  # Click stops alarm when active
+    + handle_touch()  # Snooze or night light
     + check_alarm()
-    + start_alarm() / stop_alarm() / snooze_alarm()
+    + start_alarm() / stop_alarm() / snooze_alarm() / resume_alarm()
     + update_alarm()
     + update_sunrise_leds()
+    + update_night_light()
+    + update_display_brightness()  # EMA smoothing
     + update_display()
-    + run() - main loop
+    + run()  # main loop (100ms tick)
 ```
 
 ## Timing & Execution

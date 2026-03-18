@@ -2,44 +2,150 @@ ESP32 Alarm Clock - Directory Structure
 ========================================
 
 py-alarm/
-├── README.md                   Main documentation
-├── INSTALLATION.md             Setup and installation guide
-├── PROJECT_SUMMARY.md          Implementation details
-├── QUICK_REFERENCE.txt         Quick reference card
-├── CHANGELOG.md                Version history
+├── README.md                   Main documentation (features, installation, usage)
+├── GITHUB_README.md            GitHub-focused README (badges, quick start)
+├── INSTALLATION.md             Detailed setup and troubleshooting
+├── PROJECT_SUMMARY.md          Implementation details and design notes
+├── QUICK_REFERENCE.txt         Quick reference card (pins, menu, controls)
+├── CHANGELOG.md                Version history and feature changelog
 ├── LICENSE                     MIT License
 ├── .gitignore                  Git ignore rules
-├── requirements.txt            Python dependencies info
+├── requirements.txt            Python dependencies (esptool, mpremote)
 ├── STRUCTURE.txt               This file
 │
-├── src/                        Core application files
-│   ├── main.py                 Main program (upload to ESP32)
-│   ├── config.py               Configuration & pin assignments
-│   ├── tm1637.py               TM1637 display driver
-│   ├── ds3231.py               DS3231 RTC driver
-│   ├── dfplayer.py             DFPlayer Mini MP3 driver
-│   └── rotary_encoder.py       Rotary encoder handler
+├── src/                        Core application files (upload all to ESP32)
+│   ├── main.py                 Main program: AlarmClock class and run loop
+│   ├── config.py               Configuration: pins, constants, SOUND_TYPES, thresholds
+│   ├── tm1637.py               TM1637 7-segment display driver
+│   ├── ds3231.py               DS3231 RTC driver with I2C error handling
+│   ├── dfplayer.py             DFPlayer Mini MP3 player driver (UART)
+│   └── rotary_encoder.py       Rotary encoder driver with interrupt-based ISR
 │
-├── tests/                      Hardware test scripts
-│   ├── test_display.py         Test TM1637 display
-│   ├── test_rtc.py             Test RTC timekeeping
-│   ├── test_touch.py           Test touch sensors
-│   ├── test_encoder.py         Test rotary encoder
-│   └── test_leds.py            Test WS2812B LEDs
+├── tests/                      Hardware test scripts (optional)
+│   ├── test_display.py         Test TM1637 display (all characters)
+│   ├── test_rtc.py             Test DS3231 RTC time read/write
+│   ├── test_touch.py           Test touch sensor values (GPIO4, GPIO0)
+│   ├── test_encoder.py         Test rotary encoder rotation and click
+│   └── test_leds.py            Test WS2812B LED colors and brightness
 │
-└── docs/                       Additional documentation
-    └── SYSTEM_ARCHITECTURE.md  System design & diagrams
+├── docs/                       Additional documentation
+│   └── SYSTEM_ARCHITECTURE.md  System design, state machines, data flow
+│
+└── [Auto-generated on device]
+    ├── alarm_settings.json     Saved alarm time, on/off, sound type, LED toggle
+    └── error.log               Exception log (if errors occur)
 
-Files to Upload to ESP32:
+Files to Upload to ESP32
 ==========================
-Upload all files from src/ and optionally tests/ to your ESP32.
 
-Minimum required for operation:
-- src/config.py
-- src/tm1637.py
-- src/ds3231.py
-- src/dfplayer.py
-- src/rotary_encoder.py
-- src/main.py
+Minimum required for operation (in src/):
+  1. config.py
+  2. tm1637.py
+  3. ds3231.py
+  4. dfplayer.py
+  5. rotary_encoder.py
+  6. main.py
 
-Total Size: ~28 KB (fits easily on ESP32)
+Optional test scripts (in tests/):
+  - test_display.py
+  - test_rtc.py
+  - test_touch.py
+  - test_encoder.py
+  - test_leds.py
+
+Total Size: ~30 KB (fits easily on ESP32)
+
+Upload Method:
+  mpremote connect /dev/ttyUSB0 cp <file> :<file>
+  (or use ampy, rshell, Thonny, etc.)
+
+Key Configuration Files
+=======================
+
+config.py - Pin assignments and tunable constants:
+  • PINS: GPIO assignments for all hardware
+  • MENU_ITEMS: Menu entry names (ALRM, ON-F, SOND, CLOC, LED)
+  • SOUND_TYPES: List of MP3 tracks with names
+  • SOUND_PROFILES: Per-track volume and ramp settings
+  • Light sensor thresholds: LIGHT_SENSOR_MIN/MAX, NIGHT_LIGHT_THRESHOLD
+  • Durations: SUNRISE_DURATION (600s), SNOOZE_DURATION (300s), 
+              NIGHT_LIGHT_ON/DIM_DURATION (30s+10s)
+  • Touch thresholds: TOUCH_THRESHOLD_MIN/MAX
+
+main.py - Application logic:
+  • AlarmClock class with all hardware drivers
+  • State variables: alarm time, menu position, night light, etc.
+  • Main loop: handles inputs, checks alarm, updates display/LEDs
+  • Methods: handle_encoder, handle_touch, update_alarm, update_night_light
+  • Settings save/load to alarm_settings.json
+
+Hardware Drivers
+================
+
+tm1637.py:
+  • TM1637 class for 7-segment display
+  • Methods: show(), show_time(), encode_string(), brightness()
+  • 96-character ASCII support (custom segment table)
+
+ds3231.py:
+  • DS3231 class for I2C RTC
+  • Methods: get_time(), set_time()
+  • Error-resilient (no exception on missing device)
+
+dfplayer.py:
+  • DFPlayer class for UART MP3 control
+  • Methods: play(), stop(), pause(), resume(), volume(), loop_track()
+  • Command protocol: 0x7E header, checksum, 0xEF footer
+
+rotary_encoder.py:
+  • RotaryEncoder class with interrupt-based ISR
+  • CLK pin configured for GPIO edge trigger (rise+fall)
+  • Methods: get_rotation(), get_click()
+  • Detects full detents (every 2 pulses = 1 detent)
+
+Data Flow
+=========
+
+Boot:
+  1. init_hardware() - initialize all GPIO/I2C/UART/Touch/ADC
+  2. load_settings() - read alarm_settings.json from flash
+  3. main loop ticks at 100ms
+
+Main Loop (100ms tick):
+  • update_time() - sync RTC once per minute
+  • handle_encoder() - check rotation and click; stop alarm if active
+  • handle_touch() - check snooze (GPIO4) and stop (GPIO0)
+  • update_display_brightness() - read light sensor, apply EMA
+  • Auto-stop preview if timeout
+  • check_alarm() - test if current time == alarm time
+  • update_alarm() - progress sunrise/volume if active
+  • update_night_light() - fade LEDs if night light active
+  • update_display() - show time, menu item, or feedback message
+
+Alarm Trigger Flow:
+  • check_alarm() detects time match → start_alarm()
+  • start_alarm() → dfplayer.loop_track() + set alarm_active=True
+  • update_alarm() loop (every tick) → increase volume + LED brightness
+  • Snooze: save elapsed time, pause sound, set snooze_until = now + 5min
+  • Resume: rewind start_time, restore volume, dfplayer.resume()
+  • Stop: stop sound, clear LEDs, reset alarm_active=False
+
+Night Light Trigger (if dark && alarm off):
+  • Touch GPIO4 → _night_light_start = time.time()
+  • update_night_light() → LEDs white (30s) → fade (10s) → off
+  • Only triggers if EMA light value < NIGHT_LIGHT_THRESHOLD
+
+Settings Persistence
+====================
+
+alarm_settings.json (in ESP32 flash):
+{
+  "alarm_hour": 7,
+  "alarm_minute": 30,
+  "alarm_enabled": true,
+  "sound_type": 0,
+  "led_enabled": true
+}
+
+Read on boot via load_settings()
+Updated on save_settings() (called after menu changes)

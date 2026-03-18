@@ -200,6 +200,12 @@ class AlarmClock:
         rotation = self.encoder.get_rotation()
         clicked = self.encoder.get_click()
 
+        # While alarm is active: button stops alarm, rotation is ignored
+        if self.alarm_active:
+            if clicked:
+                self.stop_alarm()
+            return
+
         if rotation != 0:
             self.last_menu_time = time.ticks_ms()
 
