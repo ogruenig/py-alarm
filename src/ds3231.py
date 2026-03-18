@@ -10,10 +10,13 @@ class DS3231:
         self.i2c = i2c
         self.addr = self.DS3231_I2C_ADDR
         
-        # Check if DS3231 is connected
-        devices = self.i2c.scan()
-        if self.addr not in devices:
-            raise Exception(f"DS3231 not found at address {hex(self.addr)}")
+        # Check if DS3231 is connected (warn only — caller handles absence)
+        try:
+            devices = self.i2c.scan()
+            if self.addr not in devices:
+                print("Warning: DS3231 not found at", hex(self.addr))
+        except OSError as e:
+            print("Warning: I2C scan failed:", e)
     
     def _bcd_to_dec(self, bcd):
         """Convert BCD to decimal"""

@@ -15,6 +15,7 @@ from config import (PINS, NUM_LEDS, UART_ID, UART_BAUDRATE,
                     LIGHT_SENSOR_MIN, LIGHT_SENSOR_MAX,
                     MENU_TIMEOUT, MENU_ITEMS,
                     SUNRISE_DURATION, SNOOZE_DURATION, ALARM_MAX_DURATION,
+                    NIGHT_LIGHT_ON_DURATION, NIGHT_LIGHT_DIM_DURATION, NIGHT_LIGHT_THRESHOLD,
                     DFPLAYER_VOLUME_MAX, SOUND_TYPES, SOUND_PROFILES,
                     TOUCH_THRESHOLD_MIN, TOUCH_THRESHOLD_MAX)
 
@@ -46,6 +47,7 @@ class AlarmClock:
         self.current_hour = 0
         self.current_minute = 0
         self.current_second = 0
+        self._last_rtc_sync = time.ticks_add(time.ticks_ms(), -60001)  # force sync on first tick
         
         # Alarm variables
         self.alarm_hour = 7
@@ -54,7 +56,10 @@ class AlarmClock:
         self.alarm_active = False
         self.alarm_start_time = 0
         self.snooze_until = 0
-        self.sound_type = 1  # Default to birds
+        self.sound_type = 0  # Index into SOUND_TYPES list (default: first entry)
+        self.led_enabled = True  # Sunrise LED on by default
+        self._night_light_start = 0  # 0 = inactive
+        self._light_ema = None        # exponential moving average of light sensor
         
         # Sunrise variables
         self.sunrise_stage = 0  # 0-255 for gradual brightening
@@ -66,7 +71,10 @@ class AlarmClock:
         self._blink_state = True
         self._blink_time = time.ticks_ms()
 
-        # Load settings from NVS
+        # Feedback display: show a message for a short time after menu action
+        self._feedback_until = 0  # ticks_ms() deadline; 0 = no feedback active
+        self._feedback_msg = ''
+        self._preview_until = 0   # stop DFPlayer preview after this time
         self.load_settings()
         
         print("Alarm Clock initialized!")
@@ -83,8 +91,12 @@ class AlarmClock:
         self.display.show("INIT")
         
         # I2C for RTC
-        self.i2c = I2C(0, scl=Pin(PINS['RTC_SCL']), sda=Pin(PINS['RTC_SDA']))
-        self.rtc = DS3231(self.i2c)
+        self.rtc = None
+        try:
+            self.i2c = I2C(0, scl=Pin(PINS['RTC_SCL']), sda=Pin(PINS['RTC_SDA']))
+            self.rtc = DS3231(self.i2c)
+        except Exception as e:
+            print("RTC init failed:", e)
         
         # DFPlayer Mini
         self.uart = UART(UART_ID, baudrate=UART_BAUDRATE, 
@@ -109,7 +121,7 @@ class AlarmClock:
         
         # Light Sensor
         self.light_sensor = ADC(Pin(PINS['LIGHT_SENSOR']))
-        self.light_sensor.atten(ADC.ATTN_11DB)  # Full range 0-3.3V
+        self.light_sensor.atten(ADC.ATTN_0DB)  # 0-1.1V range; sensor output is low voltage
         
         time.sleep(1)
     
@@ -121,7 +133,8 @@ class AlarmClock:
                 self.alarm_hour = settings.get('alarm_hour', 7)
                 self.alarm_minute = settings.get('alarm_minute', 0)
                 self.alarm_enabled = settings.get('alarm_enabled', False)
-                self.sound_type = settings.get('sound_type', 1)
+                self.sound_type = settings.get('sound_type', 0)
+                self.led_enabled = settings.get('led_enabled', True)
             print(f"Loaded settings: Alarm {self.alarm_hour:02d}:{self.alarm_minute:02d}, Enabled: {self.alarm_enabled}")
         except:
             print("No saved settings found, using defaults")
@@ -132,7 +145,8 @@ class AlarmClock:
             'alarm_hour': self.alarm_hour,
             'alarm_minute': self.alarm_minute,
             'alarm_enabled': self.alarm_enabled,
-            'sound_type': self.sound_type
+            'sound_type': self.sound_type,
+            'led_enabled': self.led_enabled
         }
         with open('alarm_settings.json', 'w') as f:
             json.dump(settings, f)
@@ -145,15 +159,29 @@ class AlarmClock:
         self.leds.write()
     
     def update_time(self):
-        """Read current time from RTC"""
-        dt = self.rtc.get_time()
-        self.current_hour = dt[4]
-        self.current_minute = dt[5]
-        self.current_second = dt[6]
+        """Read from RTC once per minute; use ticks_ms drift for in-between seconds."""
+        if self.rtc is None:
+            return
+        now = time.ticks_ms()
+        if time.ticks_diff(now, self._last_rtc_sync) >= 60000:
+            try:
+                dt = self.rtc.get_time()
+                self.current_hour = dt[4]
+                self.current_minute = dt[5]
+                self.current_second = dt[6]
+                self._last_rtc_sync = now
+            except OSError:
+                pass  # Keep cached values; try again next minute
     
     def update_display_brightness(self):
-        """Adjust display brightness based on light sensor"""
-        light_value = self.light_sensor.read()
+        """Adjust display brightness based on smoothed light sensor (EMA)"""
+        raw = self.light_sensor.read()
+        # Exponential moving average: alpha=0.05 gives ~20s lag, removes flicker
+        if self._light_ema is None:
+            self._light_ema = raw
+        else:
+            self._light_ema = 0.05 * raw + 0.95 * self._light_ema
+        light_value = int(self._light_ema)
         # Map sensor reading to display brightness
         brightness = self.map_value(
             light_value,
@@ -185,7 +213,7 @@ class AlarmClock:
             else:
                 # Enter menu on rotation
                 self.in_menu = True
-                self.menu_pos = 1  # Start at ALRM menu
+                self.menu_pos = 0  # Start at ALRM menu
 
         if clicked:
             self.last_menu_time = time.ticks_ms()
@@ -196,28 +224,57 @@ class AlarmClock:
     
     def handle_menu_action(self):
         """Handle encoder button click based on current menu position"""
-        if self.menu_pos == 1:  # ALRM - Set alarm time
+        if self.menu_pos == 0:  # ALRM - Set alarm time
             self.edit_hour = self.alarm_hour
             self.edit_minute = self.alarm_minute
             self.edit_mode = 'alrm_h'
             self._blink_state = True
             self._blink_time = time.ticks_ms()
-        elif self.menu_pos == 2:  # ON-F - Toggle alarm
+        elif self.menu_pos == 1:  # ON-F - Toggle alarm
             self.alarm_enabled = not self.alarm_enabled
             self.save_settings()
+            self._show_feedback(' ON ' if self.alarm_enabled else 'OFF ')
+            self._flash_leds_status(self.alarm_enabled)
             print(f"Alarm {'enabled' if self.alarm_enabled else 'disabled'}")
-        elif self.menu_pos == 3:  # SOND - Sound type
-            self.sound_type = (self.sound_type % len(SOUND_TYPES)) + 1
+        elif self.menu_pos == 2:  # SOND - Cycle sound type
+            self.sound_type = (self.sound_type + 1) % len(SOUND_TYPES)
             self.save_settings()
-            print(f"Sound type: {SOUND_TYPES[self.sound_type]}")
-        elif self.menu_pos == 4:  # CLOC - Set current time
+            entry = SOUND_TYPES[self.sound_type]
+            self._show_feedback(entry['name'])
+            # Play a short preview at medium volume so user can hear the track
+            self.dfplayer.volume(DFPLAYER_VOLUME_MAX // 2)
+            self.dfplayer.play(entry['track'])
+            self._preview_until = time.ticks_add(time.ticks_ms(), 5000)
+            print(f"Sound type: {entry['name']}")
+        elif self.menu_pos == 3:  # CLOC - Set current time
+            if self.rtc is None:
+                self._show_feedback('ERR ')
+                return
             dt = self.rtc.get_time()
             self.edit_hour = dt[4]
             self.edit_minute = dt[5]
             self.edit_mode = 'cloc_h'
             self._blink_state = True
             self._blink_time = time.ticks_ms()
+        elif self.menu_pos == 4:  # LED  - Toggle sunrise LED
+            self.led_enabled = not self.led_enabled
+            self.save_settings()
+            self._show_feedback(' ON ' if self.led_enabled else 'OFF ')
+            self._flash_leds_status(self.led_enabled)
+            print(f"Sunrise LED {'enabled' if self.led_enabled else 'disabled'}")
     
+    def _show_feedback(self, msg, duration_ms=2000):
+        """Display a short message on the display for duration_ms milliseconds"""
+        self._feedback_msg = msg
+        self._feedback_until = time.ticks_add(time.ticks_ms(), duration_ms)
+
+    def _flash_leds_status(self, enabled):
+        """Briefly show green (alarm on) or red (alarm off) on all LEDs"""
+        color = (0, 40, 0) if enabled else (40, 0, 0)
+        for i in range(NUM_LEDS):
+            self.leds[i] = color
+        self.leds.write()
+
     def check_menu_timeout(self):
         """Return to clock display after timeout"""
         if self.in_menu or self.edit_mode is not None:
@@ -250,9 +307,10 @@ class AlarmClock:
         elif self.edit_mode == 'cloc_h':
             self.edit_mode = 'cloc_m'
         elif self.edit_mode == 'cloc_m':
-            dt = self.rtc.get_time()
-            self.rtc.set_time(dt[0], dt[1], dt[2], dt[3],
-                              self.edit_hour, self.edit_minute, 0)
+            if self.rtc is not None:
+                dt = self.rtc.get_time()
+                self.rtc.set_time(dt[0], dt[1], dt[2], dt[3],
+                                  self.edit_hour, self.edit_minute, 0)
             print(f"Clock set to {self.edit_hour:02d}:{self.edit_minute:02d}")
             self.edit_mode = None
             self.in_menu = False
@@ -271,6 +329,11 @@ class AlarmClock:
         if TOUCH_THRESHOLD_MIN < touch_snooze_value < TOUCH_THRESHOLD_MAX:
             if self.alarm_active:
                 self.snooze_alarm()
+            elif self._night_light_start == 0:
+                ema = self._light_ema if self._light_ema is not None else NIGHT_LIGHT_THRESHOLD + 1
+                if ema < NIGHT_LIGHT_THRESHOLD:
+                    self._night_light_start = time.time()
+                    print("Night light on, t=", self._night_light_start)
 
         if TOUCH_THRESHOLD_MIN < touch_stop_value < TOUCH_THRESHOLD_MAX:
             if self.alarm_active:
@@ -287,6 +350,8 @@ class AlarmClock:
                 return
             else:
                 self.snooze_until = 0
+                self.resume_alarm()
+                return
         
         # Check if current time matches alarm time
         if self.current_hour == self.alarm_hour and self.current_minute == self.alarm_minute:
@@ -300,14 +365,16 @@ class AlarmClock:
         self.alarm_start_time = time.time()
         self.sunrise_stage = 0
 
-        # Load per-track profile
-        profile = SOUND_PROFILES.get(self.sound_type, SOUND_PROFILES[1])
+        # Load per-track profile using track number from SOUND_TYPES list
+        track = SOUND_TYPES[self.sound_type]['track']
+        profile = SOUND_PROFILES.get(track, SOUND_PROFILES[1])
         self._vol_start = profile['vol_start']
         self._ramp_dur = profile['ramp_dur']
 
-        # Start sound at the profile's starting volume
+        # Start sound at the profile's starting volume and loop the track
         self.dfplayer.volume(self._vol_start)
-        self.dfplayer.play(self.sound_type)
+        self.dfplayer.loop_track(track)
+        self._alarm_elapsed = 0  # seconds of alarm time accumulated across snoozes
     
     def update_alarm(self):
         """Update alarm state during sunrise sequence"""
@@ -316,9 +383,10 @@ class AlarmClock:
         
         elapsed = time.time() - self.alarm_start_time
         
-        # LED sunrise always uses the full SUNRISE_DURATION for visual effect
-        led_progress = min(elapsed / SUNRISE_DURATION, 1.0)
-        self.update_sunrise_leds(led_progress)
+        # LED sunrise only runs if led_enabled
+        if self.led_enabled:
+            led_progress = min(elapsed / SUNRISE_DURATION, 1.0)
+            self.update_sunrise_leds(led_progress)
 
         # Volume ramp uses per-track ramp_dur and vol_start
         ramp_progress = min(elapsed / self._ramp_dur, 1.0)
@@ -361,13 +429,27 @@ class AlarmClock:
         self.leds.write()
     
     def snooze_alarm(self):
-        """Snooze the alarm for SNOOZE_DURATION"""
+        """Snooze the alarm: pause sound, keep LEDs, resume after SNOOZE_DURATION"""
         print(f"Snoozing for {SNOOZE_DURATION // 60} minutes...")
+        # Save how far into the alarm we are so we can resume from here
+        self._alarm_elapsed = time.time() - self.alarm_start_time
         self.alarm_active = False
         self.snooze_until = time.time() + SNOOZE_DURATION
-        self.dfplayer.stop()
-        self.clear_leds()
+        self.dfplayer.pause()
+        # LEDs stay on — intentionally not calling clear_leds()
     
+    def resume_alarm(self):
+        """Resume alarm after snooze, continuing from where it paused"""
+        print("Resuming alarm after snooze...")
+        self.alarm_active = True
+        # Wind back start_time so elapsed continues from where we left off
+        self.alarm_start_time = time.time() - self._alarm_elapsed
+        # Restore the volume we were at when snooze was pressed
+        ramp_progress = min(self._alarm_elapsed / self._ramp_dur, 1.0)
+        volume = int(self._vol_start + ramp_progress * (DFPLAYER_VOLUME_MAX - self._vol_start))
+        self.dfplayer.volume(volume)
+        self.dfplayer.resume()
+
     def stop_alarm(self):
         """Stop the alarm completely"""
         print("Alarm stopped")
@@ -378,6 +460,16 @@ class AlarmClock:
     
     def update_display(self):
         """Update the display based on current mode"""
+        # Feedback message overrides everything for a short time
+        if self._feedback_until and time.ticks_diff(self._feedback_until, time.ticks_ms()) > 0:
+            self.display.show(self._feedback_msg)
+            return
+        elif self._feedback_until:
+            self._feedback_until = 0
+            # Clear status LEDs only when alarm and night light are both inactive
+            if not self.alarm_active and self._night_light_start == 0:
+                self.clear_leds()
+
         if self.edit_mode is not None:
             self._update_edit_display()
         elif self.in_menu:
@@ -413,6 +505,26 @@ class AlarmClock:
         seg[1] |= 0x80  # always show colon
         self.display.write(seg)
     
+    def update_night_light(self):
+        """Manage the night light: full white, then fade to off."""
+        if self._night_light_start == 0 or self.alarm_active:
+            return
+        elapsed = time.time() - self._night_light_start
+        total = NIGHT_LIGHT_ON_DURATION + NIGHT_LIGHT_DIM_DURATION
+        if elapsed >= total:
+            self._night_light_start = 0
+            self.clear_leds()
+            return
+        if elapsed < NIGHT_LIGHT_ON_DURATION:
+            brightness = 255
+        else:
+            # Linear fade from 255 to 0 over DIM_DURATION
+            fade = (elapsed - NIGHT_LIGHT_ON_DURATION) / NIGHT_LIGHT_DIM_DURATION
+            brightness = int(255 * (1.0 - fade))
+        for i in range(NUM_LEDS):
+            self.leds[i] = (brightness, brightness, brightness)
+        self.leds.write()
+
     def run(self):
         """Main loop"""
         print("Starting main loop...")
@@ -431,12 +543,21 @@ class AlarmClock:
                 
                 # Update display brightness
                 self.update_display_brightness()
-                
+
+                # Stop sound preview if its timer expired
+                if self._preview_until and time.ticks_diff(time.ticks_ms(), self._preview_until) >= 0:
+                    self._preview_until = 0
+                    if not self.alarm_active:
+                        self.dfplayer.stop()
+
                 # Check and update alarm
                 self.check_alarm()
                 if self.alarm_active:
                     self.update_alarm()
-                
+
+                # Night light
+                self.update_night_light()
+
                 # Update display
                 self.update_display()
                 

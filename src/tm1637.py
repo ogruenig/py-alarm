@@ -7,8 +7,16 @@ import time
 from machine import Pin
 
 class TM1637:
-    # Character encoding for 0-9, A-F, and special chars
-    _SEGMENTS = bytearray(b'\x3F\x06\x5B\x4F\x66\x6D\x7D\x07\x7F\x6F\x77\x7C\x39\x5E\x79\x71\x00')
+    # Full ASCII lookup table starting at 0x20 (space) — mcauser/micropython-tm1637 encoding
+    # index = ord(char) - 0x20
+    _SEGMENTS = bytearray(
+        b'\x00\x86\x22\x7e\x6d\xd2\x46\x20\x29\x0b\x21\x70\x10\x40\x80\x52'  # ' ' to '/'
+        b'\x3f\x06\x5b\x4f\x66\x6d\x7d\x07\x7f\x6f\x09\x0d\x61\x48\x43\x53'  # '0' to '?'
+        b'\x5f\x77\x7c\x39\x5e\x79\x71\x3d\x76\x06\x1e\x75\x38\x55\x54\x3f'  # '@' to 'O'
+        b'\x73\x67\x50\x6d\x78\x3e\x1c\x2a\x76\x6e\x5b\x39\x52\x0f\x23\x08'  # 'P' to '_'
+        b'\x20\x77\x7c\x39\x5e\x79\x71\x3d\x74\x02\x0e\x75\x30\x55\x54\x5c'  # '`' to 'o'
+        b'\x73\x67\x50\x6d\x78\x1c\x1c\x2a\x76\x6e\x5b\x46\x30\x70\x01\x00'  # 'p' to DEL
+    )
     
     def __init__(self, clk, dio, brightness=7):
         self.clk = clk
@@ -100,25 +108,15 @@ class TM1637:
     
     def encode_digit(self, digit):
         """Encode a single digit (0-9)"""
-        return self._SEGMENTS[digit if 0 <= digit <= 9 else 16]
-    
+        return self._SEGMENTS[0x10 + digit] if 0 <= digit <= 9 else 0x00
+
     def encode_string(self, string):
-        """Encode a string to segments"""
+        """Encode up to 4 characters using the full ASCII table"""
         segments = bytearray(4)
         for i in range(min(4, len(string))):
-            char = string[i]
-            if char == ' ':
-                segments[i] = 0x00
-            elif char == '-':
-                segments[i] = 0x40
-            elif '0' <= char <= '9':
-                segments[i] = self._SEGMENTS[ord(char) - ord('0')]
-            elif 'A' <= char <= 'F':
-                segments[i] = self._SEGMENTS[ord(char) - ord('A') + 10]
-            elif 'a' <= char <= 'f':
-                segments[i] = self._SEGMENTS[ord(char) - ord('a') + 10]
-            else:
-                segments[i] = 0x00
+            c = ord(string[i])
+            if 0x20 <= c <= 0x7f:
+                segments[i] = self._SEGMENTS[c - 0x20]
         return segments
     
     def show(self, string, colon=False):
