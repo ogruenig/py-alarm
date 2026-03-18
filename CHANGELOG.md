@@ -8,7 +8,7 @@ All notable changes to the ESP32 Alarm Clock project will be documented in this 
 - **On-Device Menu**: Full interactive menu on rotary encoder — set alarm time, clock time, sound, and LED toggle without REPL
 - **Night Light**: Touch snooze in the dark for 30 seconds of white LEDs, then 10-second fade
 - **6 Alarm Sounds**: Birds (BIRD), siren (SIRN), cockerel (COCK), bell (BELL), bird 2 (BRD2), pop (POP)
-- **Sound Preview**: 5-second preview for each sound when cycling in SOND menu
+- **Sound Submenu**: Interactive sound selection — rotate encoder to scroll through 6 sounds with live preview
 - **Encoder Button Stop**: Encoder button click stops alarm (fallback for unreliable GPIO0)
 - **Snooze Resume**: Snooze pauses alarm and resumes from the same point 5 minutes later
 - **LED Toggle Menu**: Independent LED sunrise toggle (LED menu item)

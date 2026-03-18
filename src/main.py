@@ -242,16 +242,9 @@ class AlarmClock:
             self._show_feedback(' ON ' if self.alarm_enabled else 'OFF ')
             self._flash_leds_status(self.alarm_enabled)
             print(f"Alarm {'enabled' if self.alarm_enabled else 'disabled'}")
-        elif self.menu_pos == 2:  # SOND - Cycle sound type
-            self.sound_type = (self.sound_type + 1) % len(SOUND_TYPES)
-            self.save_settings()
-            entry = SOUND_TYPES[self.sound_type]
-            self._show_feedback(entry['name'])
-            # Play a short preview at medium volume so user can hear the track
-            self.dfplayer.volume(DFPLAYER_VOLUME_MAX // 2)
-            self.dfplayer.play(entry['track'])
-            self._preview_until = time.ticks_add(time.ticks_ms(), 5000)
-            print(f"Sound type: {entry['name']}")
+        elif self.menu_pos == 2:  # SOND - Enter sound selection submenu
+            self.edit_mode = 'sond_select'
+            self._play_sound_preview()
         elif self.menu_pos == 3:  # CLOC - Set current time
             if self.rtc is None:
                 self._show_feedback('ERR ')
@@ -269,6 +262,14 @@ class AlarmClock:
             self._flash_leds_status(self.led_enabled)
             print(f"Sunrise LED {'enabled' if self.led_enabled else 'disabled'}")
     
+    def _play_sound_preview(self):
+        """Play a 5-second preview of the current sound_type"""
+        entry = SOUND_TYPES[self.sound_type]
+        self._show_feedback(entry['name'])
+        self.dfplayer.volume(DFPLAYER_VOLUME_MAX // 2)
+        self.dfplayer.play(entry['track'])
+        self._preview_until = time.ticks_add(time.ticks_ms(), 5000)
+
     def _show_feedback(self, msg, duration_ms=2000):
         """Display a short message on the display for duration_ms milliseconds"""
         self._feedback_msg = msg
@@ -291,7 +292,10 @@ class AlarmClock:
 
     def _handle_edit_rotation(self, rotation):
         """Adjust the value currently being edited"""
-        if self.edit_mode in ('alrm_h', 'cloc_h'):
+        if self.edit_mode == 'sond_select':
+            self.sound_type = (self.sound_type + rotation) % len(SOUND_TYPES)
+            self._play_sound_preview()
+        elif self.edit_mode in ('alrm_h', 'cloc_h'):
             self.edit_hour = (self.edit_hour + rotation) % 24
         else:
             self.edit_minute = (self.edit_minute + rotation) % 60
@@ -301,7 +305,12 @@ class AlarmClock:
 
     def _handle_edit_click(self):
         """Advance to next edit field, or commit and save when done"""
-        if self.edit_mode == 'alrm_h':
+        if self.edit_mode == 'sond_select':
+            self.save_settings()
+            print(f"Sound type: {SOUND_TYPES[self.sound_type]['name']}")
+            self.edit_mode = None
+            self.in_menu = False
+        elif self.edit_mode == 'alrm_h':
             self.edit_mode = 'alrm_m'
         elif self.edit_mode == 'alrm_m':
             self.alarm_hour = self.edit_hour

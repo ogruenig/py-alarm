@@ -53,7 +53,7 @@ Position  Display   Function              Status
 ─────────────────────────────────────────────────────────────────────
     0     ALRM      Set alarm time        ✅ Click → rotate hrs → click → rotate min → click
     1     ON-F      Toggle alarm on/off   ✅ Click to toggle, LEDs flash feedback
-    2     SOND      Change sound type     ✅ Click to cycle, plays 5s preview
+    2     SOND      Change sound type     ✅ Click to enter submenu → rotate → click to save
     3     CLOC      Set current time      ✅ Click → rotate hrs → click → rotate min → click
     4     LED       Toggle sunrise LEDs   ✅ Click to enable/disable
 ─────────────────────────────────────────────────────────────────────

@@ -92,7 +92,7 @@ The alarm clock has 5 menu items, navigated with the rotary encoder:
 |----------|---------|----------|--------|
 | 0 | `ALRM` | Set alarm time | Click → rotate hours → click → rotate minutes → click to save |
 | 1 | `ON-F` | Toggle alarm on/off | Click to toggle; display shows ` ON ` or `OFF `, LEDs flash green/red |
-| 2 | `SOND` | Change sound type | Click to cycle: BIRD → SIRN → COCK → BELL → BRD2 → POP; plays 5 s preview |
+| 2 | `SOND` | Change sound type | Click to enter submenu → rotate wheel to scroll sounds → click to confirm |
 | 3 | `CLOC` | Set current time | Click → rotate hours → click → rotate minutes → click to save to RTC |
 | 4 | `LED ` | Toggle sunrise LEDs | Click to enable/disable LED sunrise effect independently of sound |
 
