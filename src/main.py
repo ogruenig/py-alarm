@@ -326,6 +326,12 @@ class AlarmClock:
                 dt = self.rtc.get_time()
                 self.rtc.set_time(dt[0], dt[1], dt[2], dt[3],
                                   self.edit_hour, self.edit_minute, 0)
+            # Update cached values immediately; reset sync timer so next read
+            # is in 60s instead of picking up the old time from the cache.
+            self.current_hour = self.edit_hour
+            self.current_minute = self.edit_minute
+            self.current_second = 0
+            self._last_rtc_sync = time.ticks_ms()
             print(f"Clock set to {self.edit_hour:02d}:{self.edit_minute:02d}")
             self.edit_mode = None
             self.in_menu = False
