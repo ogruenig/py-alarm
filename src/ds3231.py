@@ -63,8 +63,22 @@ class DS3231:
         data[4] = self._dec_to_bcd(day)
         data[5] = self._dec_to_bcd(month)
         data[6] = self._dec_to_bcd(year - 2000)
-        
+
         self.i2c.writeto_mem(self.addr, 0x00, data)
+        self.clear_osf()  # Time is now valid; clear the stop flag
+
+    def osf_set(self):
+        """Return True if the Oscillator Stop Flag is set.
+        OSF=1 means the RTC oscillator was stopped at some point (dead/missing
+        backup battery) and the stored time is not reliable.
+        """
+        status = self.i2c.readfrom_mem(self.addr, 0x0F, 1)[0]
+        return bool(status & 0x80)
+
+    def clear_osf(self):
+        """Clear the Oscillator Stop Flag after the time has been set."""
+        status = self.i2c.readfrom_mem(self.addr, 0x0F, 1)[0]
+        self.i2c.writeto_mem(self.addr, 0x0F, bytes([status & 0x7F]))
     
     def get_temperature(self):
         """

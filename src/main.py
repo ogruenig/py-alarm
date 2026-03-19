@@ -47,6 +47,8 @@ class AlarmClock:
         self.current_hour = 0
         self.current_minute = 0
         self.current_second = 0
+        self._sync_epoch = 0          # seconds-since-midnight at last RTC read
+        self._sync_ticks = time.ticks_ms()  # ticks_ms at last RTC read
         self._last_rtc_sync = time.ticks_add(time.ticks_ms(), -60001)  # force sync on first tick
         
         # Alarm variables
@@ -78,6 +80,16 @@ class AlarmClock:
         self.load_settings()
         
         print("Alarm Clock initialized!")
+
+        # Warn if RTC lost power (backup battery dead or missing)
+        if self.rtc is not None:
+            try:
+                if self.rtc.osf_set():
+                    print("WARNING: RTC oscillator was stopped — backup battery may be dead. Please set the clock time.")
+                    self.display.show("bAt?")
+                    time.sleep(3)
+            except OSError:
+                pass
     
     def init_hardware(self):
         """Initialize all hardware components"""
@@ -159,19 +171,28 @@ class AlarmClock:
         self.leds.write()
     
     def update_time(self):
-        """Read from RTC once per minute; use ticks_ms drift for in-between seconds."""
-        if self.rtc is None:
-            return
+        """Extrapolate current time from last RTC sync using ticks_ms.
+        Re-syncs from RTC at most once per minute; tolerates occasional I2C failures.
+        """
         now = time.ticks_ms()
-        if time.ticks_diff(now, self._last_rtc_sync) >= 60000:
+
+        # Re-sync from RTC once per minute (or on first call)
+        if self.rtc is not None and time.ticks_diff(now, self._last_rtc_sync) >= 60000:
             try:
                 dt = self.rtc.get_time()
-                self.current_hour = dt[4]
-                self.current_minute = dt[5]
-                self.current_second = dt[6]
+                self._sync_epoch = dt[4] * 3600 + dt[5] * 60 + dt[6]
+                self._sync_ticks = now
                 self._last_rtc_sync = now
             except OSError:
-                pass  # Keep cached values; try again next minute
+                # I2C failed — keep extrapolating from last good sync; retry next minute
+                self._last_rtc_sync = now
+
+        # Always extrapolate current time from the last successful sync
+        elapsed_s = time.ticks_diff(now, self._sync_ticks) // 1000
+        total_s = (self._sync_epoch + elapsed_s) % 86400
+        self.current_hour = total_s // 3600
+        self.current_minute = (total_s % 3600) // 60
+        self.current_second = total_s % 60
     
     def update_display_brightness(self):
         """Adjust display brightness based on smoothed light sensor (EMA)"""
@@ -236,12 +257,10 @@ class AlarmClock:
             self.edit_mode = 'alrm_h'
             self._blink_state = True
             self._blink_time = time.ticks_ms()
-        elif self.menu_pos == 1:  # ON-F - Toggle alarm
-            self.alarm_enabled = not self.alarm_enabled
-            self.save_settings()
+        elif self.menu_pos == 1:  # ON-F - Enter alarm on/off submenu
+            self.edit_mode = 'onf_select'
             self._show_feedback(' ON ' if self.alarm_enabled else 'OFF ')
             self._flash_leds_status(self.alarm_enabled)
-            print(f"Alarm {'enabled' if self.alarm_enabled else 'disabled'}")
         elif self.menu_pos == 2:  # SOND - Enter sound selection submenu
             self.edit_mode = 'sond_select'
             self._play_sound_preview()
@@ -255,12 +274,10 @@ class AlarmClock:
             self.edit_mode = 'cloc_h'
             self._blink_state = True
             self._blink_time = time.ticks_ms()
-        elif self.menu_pos == 4:  # LED  - Toggle sunrise LED
-            self.led_enabled = not self.led_enabled
-            self.save_settings()
+        elif self.menu_pos == 4:  # LED  - Enter LED on/off submenu
+            self.edit_mode = 'led_select'
             self._show_feedback(' ON ' if self.led_enabled else 'OFF ')
             self._flash_leds_status(self.led_enabled)
-            print(f"Sunrise LED {'enabled' if self.led_enabled else 'disabled'}")
     
     def _play_sound_preview(self):
         """Play a 5-second preview of the current sound_type"""
@@ -295,6 +312,14 @@ class AlarmClock:
         if self.edit_mode == 'sond_select':
             self.sound_type = (self.sound_type + rotation) % len(SOUND_TYPES)
             self._play_sound_preview()
+        elif self.edit_mode == 'onf_select':
+            self.alarm_enabled = not self.alarm_enabled
+            self._show_feedback(' ON ' if self.alarm_enabled else 'OFF ')
+            self._flash_leds_status(self.alarm_enabled)
+        elif self.edit_mode == 'led_select':
+            self.led_enabled = not self.led_enabled
+            self._show_feedback(' ON ' if self.led_enabled else 'OFF ')
+            self._flash_leds_status(self.led_enabled)
         elif self.edit_mode in ('alrm_h', 'cloc_h'):
             self.edit_hour = (self.edit_hour + rotation) % 24
         else:
@@ -308,6 +333,16 @@ class AlarmClock:
         if self.edit_mode == 'sond_select':
             self.save_settings()
             print(f"Sound type: {SOUND_TYPES[self.sound_type]['name']}")
+            self.edit_mode = None
+            self.in_menu = False
+        elif self.edit_mode == 'onf_select':
+            self.save_settings()
+            print(f"Alarm {'enabled' if self.alarm_enabled else 'disabled'}")
+            self.edit_mode = None
+            self.in_menu = False
+        elif self.edit_mode == 'led_select':
+            self.save_settings()
+            print(f"Sunrise LED {'enabled' if self.led_enabled else 'disabled'}")
             self.edit_mode = None
             self.in_menu = False
         elif self.edit_mode == 'alrm_h':
@@ -326,12 +361,10 @@ class AlarmClock:
                 dt = self.rtc.get_time()
                 self.rtc.set_time(dt[0], dt[1], dt[2], dt[3],
                                   self.edit_hour, self.edit_minute, 0)
-            # Update cached values immediately; reset sync timer so next read
-            # is in 60s instead of picking up the old time from the cache.
-            self.current_hour = self.edit_hour
-            self.current_minute = self.edit_minute
-            self.current_second = 0
-            self._last_rtc_sync = time.ticks_ms()
+            # Update sync anchor immediately so extrapolation starts from new time.
+            self._sync_epoch = self.edit_hour * 3600 + self.edit_minute * 60
+            self._sync_ticks = time.ticks_ms()
+            self._last_rtc_sync = self._sync_ticks  # re-sync in 60s
             print(f"Clock set to {self.edit_hour:02d}:{self.edit_minute:02d}")
             self.edit_mode = None
             self.in_menu = False
@@ -502,6 +535,10 @@ class AlarmClock:
 
     def _update_edit_display(self):
         """Show blinking hour or minute field while editing"""
+        # Non-time modes handle their own display via _show_feedback; nothing extra to render
+        if self.edit_mode not in ('alrm_h', 'alrm_m', 'cloc_h', 'cloc_m'):
+            return
+
         if time.ticks_diff(time.ticks_ms(), self._blink_time) > 500:
             self._blink_state = not self._blink_state
             self._blink_time = time.ticks_ms()
