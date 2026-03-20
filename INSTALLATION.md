@@ -132,6 +132,7 @@ mpremote connect /dev/ttyUSB0 run tests/test_touch.py
 - Run `test_touch.py` to see raw values
 - Adjust `TOUCH_THRESHOLD_MIN` / `TOUCH_THRESHOLD_MAX` in `config.py` to match
 - GPIO 0 (stop pad) is known to be unreliable when I2C is active — use encoder button click to stop the alarm instead
+- Alternatively connect GPIO33 (=T8), or GPIO13/GPIO14, which are good touch pins.
 
 ### Night light not triggering
 - Run `test_light_sensor.py` to see the current EMA reading
