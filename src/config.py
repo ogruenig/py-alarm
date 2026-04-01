@@ -77,6 +77,7 @@ SOUND_TYPES = [
     {'track': 4, 'name': 'BELL'},   # Bell
     {'track': 5, 'name': 'BRD2'},   # Bird 2
     {'track': 6, 'name': 'POP '},   # Pop music
+    {'track': 7, 'name': 'DAD '},   # Dad talking
 ]
 
 # Per-track sound profiles keyed by track number
@@ -89,6 +90,7 @@ SOUND_PROFILES = {
     4: {'vol_start': 10, 'ramp_dur': 120},  # Bell: moderate ramp over 2 min
     5: {'vol_start':  5, 'ramp_dur': 600},  # Bird 2: gentle ramp like Bird 1
     6: {'vol_start': 15, 'ramp_dur': 180},  # Pop music: starts loud, full volume in 3 min
+    7: {'vol_start': 10, 'ramp_dur': 120},  # Dad talking: moderate ramp over 2 min
 }
 
 # Touch Sensor Thresholds

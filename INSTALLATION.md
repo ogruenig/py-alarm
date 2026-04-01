@@ -73,17 +73,6 @@ Files **must** be named exactly `0001.mp3`, `0002.mp3`, etc. Insert the card int
 
 On the first power-on, the display may show `bAt?` for 3 seconds if the RTC has never been set (or if the DS3231 backup battery is flat). This is normal — use the **CLOC** menu item to set the correct time directly on the device.
 
-If you prefer to set the time via REPL (e.g. on first-ever boot before any menu interaction):
-
-```python
-from machine import I2C, Pin
-from ds3231 import DS3231
-i2c = I2C(0, scl=Pin(22), sda=Pin(21))
-rtc = DS3231(i2c)
-rtc.set_time(2026, 3, 19, 4, 8, 0, 0)  # year, month, day, weekday, hour, min, sec
-print(rtc.format_time())  # verify
-```
-
 ---
 
 ## 5. Test Individual Components

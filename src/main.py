@@ -216,7 +216,7 @@ class AlarmClock:
         """Map a value from one range to another"""
         return int((x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min)
     
-    def handle_encoder(self):
+    def handle_encoder(self):pygirls.io
         """Process rotary encoder input"""
         rotation = self.encoder.get_rotation()
         clicked = self.encoder.get_click()
